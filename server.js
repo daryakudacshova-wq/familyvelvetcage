@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SQLiteStore = sqliteStoreFactory(session);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
@@ -274,7 +274,7 @@ app.delete('/api/trees/:treeId/relations/:rid', auth, (req, res) => {
 
 // ===== START =====
 initDb().then(() => {
-  app.listen(PORT, () => console.log(`Сервер запущен: http://localhost:${PORT}`));
+  app.listen(PORT, '0.0.0.0', () => console.log(`Сервер запущен на порту ${PORT}`));
 }).catch(err => {
   console.error('Ошибка инициализации БД:', err);
 });
