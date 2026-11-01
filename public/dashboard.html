@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><title>Мои древа</title>
+<style>
+body{font-family:sans-serif;background:#eef;margin:0;padding:30px}
+.top{display:flex;justify-content:space-between;align-items:center;max-width:800px;margin:0 auto 20px}
+.tree{background:#fff;padding:14px;margin:8px 0;border-radius:8px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+a{color:#4a6cf7;text-decoration:none;font-weight:bold}
+button{padding:6px 12px;cursor:pointer;border:none;border-radius:6px;background:#4a6cf7;color:#fff}
+button.del{background:#e74c3c}
+.container{max-width:800px;margin:0 auto}
+.new{display:flex;gap:8px;margin-bottom:20px}
+input{flex:1;padding:8px;border-radius:6px;border:1px solid #ccc}
+</style></head><body>
+<div class="top">
+  <h2>👤 <span id="uname"></span></h2>
+  <button onclick="logout()" style="background:#888">Выйти</button>
+</div>
+<div class="container">
+  <div class="new">
+    <input id="tname" placeholder="Название древа">
+    <button onclick="createTree()">➕ Создать</button>
+  </div>
+  <div id="list"></div>
+</div>
+<script>
+async function load(){
+  const me = await (await fetch('/api/me')).json();
+  if(!me.user) return location.href='/';
+  uname.textContent = me.user.username;
+
+  const trees = await (await fetch('/api/trees')).json();
+  list.innerHTML = trees.map(t => `
+    <div class="tree">
+      <div>
+        <a href="/tree.html?id=${t.id}">🌳 ${t.name}</a>
+        <div style="font-size:12px;color:#888">ID: ${t.id} ${t.is_public?'· 🌐 публичное':''}</div>
+      </div>
+      <button class="del" onclick="delTree('${t.id}')">Удалить</button>
+    </div>`).join('') || '<p>Пока нет древ. Создай первое!</p>';
+}
+async function createTree(){
+  const name = tname.value.trim() || 'Моё древо';
+  await fetch('/api/trees', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name})
+  });
+  tname.value='';
+  load();
+}
+async function delTree(id){
+  if(!confirm('Удалить древо?')) return;
+  await fetch('/api/trees/'+id, {method:'DELETE'});
+  load();
+}
+async function logout(){
+  await fetch('/api/logout', {method:'POST'});
+  location.href='/';
+}
+load();
+</script>
+</body></html>

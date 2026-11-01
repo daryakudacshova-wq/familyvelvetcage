@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><title>Вход</title>
+<style>
+body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#eef}
+.box{background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1);width:320px}
+input{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}
+button{width:100%;padding:10px;margin-top:8px;cursor:pointer;background:#4a6cf7;color:#fff;border:none;border-radius:6px}
+button.alt{background:#888}
+.err{color:red;font-size:13px}
+</style></head><body>
+<div class="box">
+  <h2>Генеалогическое древо</h2>
+  <input id="u" placeholder="Логин">
+  <input id="p" type="password" placeholder="Пароль">
+  <button onclick="doLogin()">Войти</button>
+  <button class="alt" onclick="doRegister()">Зарегистрироваться</button>
+  <div id="err" class="err"></div>
+</div>
+<script>
+const api = async (url, body) => {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  return r.json();
+};
+async function doLogin(){
+  const res = await api('/api/login', {username:u.value, password:p.value});
+  if(res.error) return err.textContent = res.error;
+  location.href = '/dashboard.html';
+}
+async function doRegister(){
+  const res = await api('/api/register', {username:u.value, password:p.value});
+  if(res.error) return err.textContent = res.error;
+  location.href = '/dashboard.html';
+}
+// если уже залогинен
+fetch('/api/me').then(r=>r.json()).then(d=>{ if(d.user) location.href='/dashboard.html'; });
+</script>
+</body></html>

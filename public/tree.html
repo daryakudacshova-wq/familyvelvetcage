@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Древо</title>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<style>
+  body { margin:0; display:flex; height:100vh; font-family:sans-serif; }
+  #sidebar { width:320px; padding:12px; background:#f4f4f4; overflow-y:auto; box-sizing:border-box; }
+  #cy { flex:1; background:#fafafa; }
+  input, select, button {
+    width:100%; padding:6px; margin-top:4px; box-sizing:border-box;
+    border-radius:5px; border:1px solid #ccc;
+  }
+  button { background:#4a6cf7; color:#fff; border:none; cursor:pointer; }
+  button:hover { background:#3a5cd7; }
+  button.warn { background:#e74c3c; }
+  button.warn:hover { background:#c0392b; }
+  button.pub { background:#27ae60; }
+  button.pub:hover { background:#1e8449; }
+  button.reload { background:#7f8c8d; }
+  button.reload:hover { background:#566573; }
+  h4 { margin:12px 0 4px; }
+  .person {
+    border-bottom:1px solid #ddd; padding:6px 0;
+    display:flex; justify-content:space-between; align-items:center; gap:4px;
+  }
+  .person .name { cursor:pointer; flex:1; }
+  .person .actions { display:flex; gap:4px; }
+  .person .actions button {
+    width:auto; padding:2px 6px; font-size:11px; margin:0;
+  }
+  .person .actions button.pin { background:#f39c12; }
+  .person .actions button.pin.active { background:#e67e22; }
+  #info {
+    background:#fff; padding:8px; border-radius:6px;
+    font-size:13px; margin-top:8px; min-height:40px;
+  }
+  #treeName { font-weight:bold; }
+  #treeId { font-size:12px; color:#666; }
+  .legend { margin-top:10px; font-size:11px; color:#555; }
+  .legend .dot {
+    display:inline-block; width:12px; height:12px;
+    border-radius:50%; margin-right:5px; vertical-align:middle;
+  }
+  .hint {
+    background:#fff8dc; padding:6px; font-size:11px; border-radius:4px;
+    margin-top:6px; color:#665500;
+  }
+  #errorBox {
+    background:#ffe0e0; color:#900; padding:8px; border-radius:4px;
+    font-size:12px; margin-top:8px; display:none;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="treeName"></div>
+  <div id="treeId"></div>
+
+  <div id="ownerBlock">
+    <h4>Добавить персонажа</h4>
+    <input id="pname" placeholder="Имя">
+    <input id="pphoto" type="file" accept="image/*">
+    <button onclick="addPerson()">➕ Добавить</button>
+
+    <h4>Связь</h4>
+    <select id="fromSel"></select>
+    <select id="relType">
+      <option value="parent">Родитель → Ребёнок</option>
+      <option value="partner">Партнёр (брак)</option>
+      <option value="incest">Инцест-связь</option>
+    </select>
+    <select id="toSel"></select>
+    <button onclick="addRelation()">🔗 Связать</button>
+
+    <button class="pub" onclick="publish()">🌐 Опубликовать и получить ссылку</button>
+    <button class="reload" onclick="load()">🔄 Обновить</button>
+
+    <div class="hint">
+      📌 — закрепить персонажа на месте.<br>
+      Перетащи его мышкой, потом нажми 📌.
+    </div>
+  </div>
+
+  <div id="errorBox"></div>
+
+  <h4>Персонажи</h4>
+  <div id="list"></div>
+
+  <h4>Семья персонажа</h4>
+  <div id="info">Кликни на персонажа</div>
+
+  <div class="legend">
+    <div><span class="dot" style="background:#ffb6c1"></span>1-е поколение</div>
+    <div><span class="dot" style="background:#b0e0e6"></span>2-е поколение</div>
+    <div><span class="dot" style="background:#d8bfd8"></span>3-е поколение</div>
+    <div><span class="dot" style="background:#ffe4b5"></span>4-е поколение</div>
+    <div><span class="dot" style="background:#98fb98"></span>5-е поколение</div>
+  </div>
+</div>
+
+<div id="cy"></div>
+
+<script>
+cytoscape.use(cytoscapeDagre);
+
+const params = new URLSearchParams(location.search);
+const treeId = params.get('id');
+if (!treeId) location.href = '/dashboard.html';
+
+let isOwner = false;
+let data = { persons: [], relations: [] };
+
+const GENERATION_COLORS = ['#ffb6c1', '#b0e0e6', '#d8bfd8', '#ffe4b5', '#98fb98'];
+
+function showError(msg) {
+  const box = document.getElementById('errorBox');
+  box.style.display = 'block';
+  box.textContent = '⚠️ ' + msg;
+  console.error(msg);
+  setTimeout(() => { box.style.display = 'none'; }, 8000);
+}
+
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'label': 'data(name)',
+        'background-image': 'data(photo)',
+        'background-fit': 'cover',
+        'background-color': 'data(color)',
+        'width': 60, 'height': 60,
+        'border-width': 3, 'border-color': '#333',
+        'text-valign': 'bottom', 'text-margin-y': 5,
+        'font-size': 11, 'font-weight': 'bold',
+        'color': '#000',
+        'text-outline-width': 2, 'text-outline-color': '#fff'
+      }
+    },
+    {
+      selector: 'node:selected',
+      style: { 'border-width': 5, 'border-color': '#ff6600' }
+    },
+    {
+      selector: 'node[pinned="true"]',
+      style: { 'border-color': '#f39c12', 'border-width': 4 }
+    },
+    {
+      selector: 'edge[type="parent"]',
+      style: {
+        'line-color': '#3498db',
+        'target-arrow-shape': 'triangle',
+        'target-arrow-color': '#3498db',
+        'curve-style': 'bezier',
+        'arrow-scale': 1.2, 'width': 2
+      }
+    },
+    {
+      selector: 'edge[type="partner"]',
+      style: {
+        'line-color': '#e91e63',
+        'curve-style': 'bezier', 'line-style': 'solid', 'width': 3
+      }
+    },
+    {
+      selector: 'edge[type="incest"]',
+      style: {
+        'line-color': '#9b59b6',
+        'curve-style': 'bezier', 'line-style': 'dashed', 'width': 2
+      }
+    }
+  ]
+});
+
+cy.on('tap', 'node', evt => showFamily(evt.target.id()));
+
+// ============== ЗАГРУЗКА ==============
+async function load(){
+  try {
+    const res = await fetch('/api/trees/' + treeId);
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      showError('Не удалось загрузить: ' + (err.error || res.status));
+      if (res.status === 403) setTimeout(()=>location.href='/dashboard.html', 1500);
+      return;
+    }
+
+    const d = await res.json();
+    isOwner = d.isOwner;
+    data = { persons: d.persons, relations: d.relations };
+
+    document.getElementById('treeName').textContent = '🌳 ' + d.tree.name;
+    document.getElementById('treeId').textContent = 'ID: ' + d.tree.id;
+    if (!isOwner) document.getElementById('ownerBlock').style.display = 'none';
+
+    redraw();
+  } catch (e) {
+    showError('Ошибка сети: ' + e.message);
+  }
+}
+
+// ============== ПОКОЛЕНИЯ ==============
+function computeGenerations(){
+  const cache = {};
+  function calc(personId, visited = new Set()){
+    if (cache[personId] !== undefined) return cache[personId];
+    if (visited.has(personId)) return 0;
+    visited.add(personId);
+
+    const parents = data.relations
+      .filter(r => r.to_id === personId && r.type === 'parent')
+      .map(r => r.from_id);
+
+    if (!parents.length) { cache[personId] = 0; return 0; }
+    const maxParent = Math.max(...parents.map(p => calc(p, visited)));
+    cache[personId] = maxParent + 1;
+    return cache[personId];
+  }
+  data.persons.forEach(p => calc(p.id));
+  return cache;
+}
+
+// ============== ПЕРЕРИСОВКА ==============
+function redraw(){
+  const generations = computeGenerations();
+
+  cy.elements().remove();
+
+  cy.add(data.persons.map(p => {
+    const g = generations[p.id] || 0;
+    const isPinned = p.pos_x !== null && p.pos_x !== undefined;
+    return {
+      data: {
+        id: p.id,
+        name: p.name,
+        photo: p.photo || '',
+        color: GENERATION_COLORS[g % GENERATION_COLORS.length],
+        generation: g,
+        pinned: isPinned ? 'true' : 'false'
+      },
+      position: isPinned ? { x: p.pos_x, y: p.pos_y } : undefined
+    };
+  }));
+
+  cy.add(data.relations.map(r => ({
+    data: { id: r.id, source: r.from_id, target: r.to_id, type: r.type }
+  })));
+
+  const pinnedPositions = {};
+  cy.nodes('[pinned = "true"]').forEach(n => {
+    pinnedPositions[n.id()] = { ...n.position() };
+  });
+
+  const layout = cy.layout({
+    name: 'dagre',
+    rankDir: 'TB',
+    nodeSep: 60,
+    rankSep: 140,
+    edgeSep: 20,
+    padding: 40,
+    animate: true,
+    animationDuration: 500,
+    fit: true
+  });
+
+  layout.run();
+
+  setTimeout(() => {
+    Object.entries(pinnedPositions).forEach(([id, pos]) => {
+      const node = cy.getElementById(id);
+      if (!node.empty()) node.position(pos);
+    });
+    if (isOwner) {
+      cy.nodes().forEach(n => {
+        n.grabify();
+        if (n.data('pinned') === 'true') n.lock();
+      });
+    } else {
+      cy.nodes().forEach(n => n.ungrabify());
+    }
+  }, 550);
+
+  renderSidebar();
+}
+
+// ============== БОКОВАЯ ПАНЕЛЬ ==============
+function renderSidebar(){
+  document.getElementById('fromSel').innerHTML =
+    data.persons.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  document.getElementById('toSel').innerHTML =
+    data.persons.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+
+  document.getElementById('list').innerHTML = data.persons.map(p => {
+    const pinned = p.pos_x !== null && p.pos_x !== undefined;
+    return `
+    <div class="person">
+      <span class="name" onclick="focusPerson('${p.id}')">${p.name}</span>
+      <span class="actions">
+        ${isOwner ? `<button class="pin ${pinned ? 'active' : ''}" title="${pinned ? 'Открепить' : 'Закрепить'}" onclick="togglePin('${p.id}')">📌</button>` : ''}
+        ${isOwner ? `<button title="Редактировать" onclick="editPerson('${p.id}')">✏️</button>` : ''}
+        ${isOwner ? `<button class="warn" title="Удалить" onclick="delPerson('${p.id}')">✖</button>` : ''}
+      </span>
+    </div>`;
+  }).join('') || '<i>пока пусто</i>';
+}
+
+function focusPerson(id){
+  const n = cy.getElementById(id);
+  if (n.empty()) return;
+  cy.animate({ center:{ eles:n }, zoom:1.2 }, { duration:400 });
+  showFamily(id);
+}
+
+// ============== ЗАКРЕПИТЬ / ОТКРЕПИТЬ ==============
+async function togglePin(id){
+  const person = data.persons.find(p => p.id === id);
+  if (!person) return;
+
+  const isPinned = person.pos_x !== null && person.pos_x !== undefined;
+  const node = cy.getElementById(id);
+
+  if (isPinned) {
+    const r = await fetch(`/api/trees/${treeId}/persons/${id}/position`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ x: null, y: null })
+    });
+    if (!r.ok) return showError('Ошибка открепления');
+    person.pos_x = null;
+    person.pos_y = null;
+    redraw();
+  } else {
+    const pos = node.position();
+    const r = await fetch(`/api/trees/${treeId}/persons/${id}/position`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ x: pos.x, y: pos.y })
+    });
+    if (!r.ok) return showError('Ошибка закрепления');
+    person.pos_x = pos.x;
+    person.pos_y = pos.y;
+    node.data('pinned', 'true');
+    node.lock();
+    renderSidebar();
+  }
+}
+
+// ============== СЕМЬЯ ==============
+function showFamily(id){
+  const person = data.persons.find(p => p.id === id);
+  if (!person) return;
+
+  const children = data.relations
+    .filter(r => r.from_id === id && r.type === 'parent')
+    .map(r => data.persons.find(p => p.id === r.to_id)?.name)
+    .filter(Boolean);
+
+  const parents = data.relations
+    .filter(r => r.to_id === id && r.type === 'parent')
+    .map(r => data.persons.find(p => p.id === r.from_id)?.name)
+    .filter(Boolean);
+
+  const partners = data.relations
+    .filter(r => (r.from_id === id || r.to_id === id) &&
+                 (r.type === 'partner' || r.type === 'incest'))
+    .map(r => {
+      const other = r.from_id === id ? r.to_id : r.from_id;
+      const nm = data.persons.find(p => p.id === other)?.name;
+      return `${nm}${r.type === 'incest' ? ' 🩸' : ''}`;
+    })
+    .filter(Boolean);
+
+  document.getElementById('info').innerHTML = `
+    <b>${person.name}</b><br>
+    ${parents.length ? `👨‍👩‍👦 Родители: ${parents.join(', ')}<br>` : ''}
+    ${children.length ? `👶 Дети: ${children.join(', ')}<br>` : ''}
+    ${partners.length ? `💞 Партнёры: ${partners.join(', ')}` : ''}
+  `;
+}
+
+// ============== ДОБАВЛЕНИЕ ==============
+async function addPerson(){
+  const nameEl = document.getElementById('pname');
+  const photoEl = document.getElementById('pphoto');
+  const name = nameEl.value.trim();
+
+  if (!name) return alert('Введи имя персонажа');
+
+  const fd = new FormData();
+  fd.append('name', name);
+  if (photoEl.files[0]) fd.append('photo', photoEl.files[0]);
+
+  try {
+    const r = await fetch(`/api/trees/${treeId}/persons`, { method: 'POST', body: fd });
+    if (!r.ok) {
+      const err = await r.json().catch(()=>({}));
+      showError('Не удалось добавить: ' + (err.error || r.status));
+      return;
+    }
+    const created = await r.json();
+    created.pos_x = null;
+    created.pos_y = null;
+    data.persons.push(created);
+    nameEl.value = '';
+    photoEl.value = '';
+    redraw();
+  } catch (e) {
+    showError('Ошибка сети: ' + e.message);
+  }
+}
+
+// ============== РЕДАКТИРОВАНИЕ ==============
+async function editPerson(id){
+  const person = data.persons.find(p => p.id === id);
+  if (!person) return;
+  const newName = prompt('Новое имя:', person.name);
+  if (newName === null) return;
+  const changePhoto = confirm('Поменять фото? (Отмена — оставить как есть)');
+  const fd = new FormData();
+  fd.append('name', newName.trim() || person.name);
+  if (changePhoto) {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*';
+    input.onchange = async () => {
+      if (input.files[0]) fd.append('photo', input.files[0]);
+      await sendEdit(id, fd);
+    };
+    input.click();
+    return;
+  }
+  await sendEdit(id, fd);
+}
+
+async function sendEdit(id, fd){
+  const r = await fetch(`/api/trees/${treeId}/persons/${id}`, { method: 'PUT', body: fd });
+  if (!r.ok) {
+    const err = await r.json().catch(()=>({}));
+    return showError('Ошибка сохранения: ' + (err.error || r.status));
+  }
+  const updated = await r.json();
+  const p = data.persons.find(x => x.id === id);
+  if (p) { p.name = updated.name; p.photo = updated.photo; }
+  redraw();
+  showFamily(id);
+}
+
+// ============== УДАЛЕНИЕ ==============
+async function delPerson(id){
+  const person = data.persons.find(p => p.id === id);
+  if (!person) return;
+  if (!confirm(`Удалить "${person.name}" и всех связанных с ним?`)) return;
+
+  const r = await fetch(`/api/trees/${treeId}/persons/${id}`, { method: 'DELETE' });
+  if (!r.ok) {
+    const err = await r.json().catch(()=>({}));
+    return showError('Ошибка удаления: ' + (err.error || r.status));
+  }
+  const d = await r.json();
+  const deleted = new Set(d.deleted || [id]);
+  data.persons = data.persons.filter(p => !deleted.has(p.id));
+  data.relations = data.relations.filter(r =>
+    !deleted.has(r.from_id) && !deleted.has(r.to_id)
+  );
+  document.getElementById('info').innerHTML = 'Персонаж удалён.';
+  redraw();
+}
+
+// ============== СВЯЗИ ==============
+async function addRelation(){
+  const from_id = document.getElementById('fromSel').value;
+  const to_id = document.getElementById('toSel').value;
+  const type = document.getElementById('relType').value;
+  if (!from_id || !to_id) return alert('Выбери двух персонажей');
+  if (from_id === to_id) return alert('Нельзя связать персонажа с самим собой');
+
+  const r = await fetch(`/api/trees/${treeId}/relations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from_id, to_id, type })
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(()=>({}));
+    return showError('Ошибка связи: ' + (err.error || r.status));
+  }
+  const created = await r.json();
+  data.relations.push(created);
+  redraw();
+}
+
+// ============== ПУБЛИКАЦИЯ ==============
+async function publish(){
+  const r = await fetch(`/api/trees/${treeId}/publish`, { method: 'POST' });
+  if (!r.ok) return showError('Ошибка публикации');
+  const url = location.origin + '/tree.html?id=' + treeId;
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('🌐 Ссылка скопирована:\n' + url);
+  } catch {
+    prompt('Скопируй ссылку вручную:', url);
+  }
+}
+
+// ============== СТАРТ ==============
+load();
+</script>
+</body>
+</html>
